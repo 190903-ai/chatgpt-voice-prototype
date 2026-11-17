@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Live Transcripts for Voice — Working Prototype</title>
+<style>
+/* ============================================================
+   Live Transcripts for Voice — interactive prototype
+   Chrome swiped from the ChatGPT mobile app:
+     · dictation REPLACES the composer with ✕ / waveform / ✓
+     · voice mode is a full screen blob + real control row
+   The only thing added to either is the live two-tone transcript.
+   Runs fully offline.
+   ============================================================ */
+
+:root{
+  --paper:#FFFFFF;
+  --ink:#0D0D0D;        /* final / committed transcript */
+  --slate:#5D5D5D;      /* secondary text */
+  --mist:#9B9B9B;       /* interim / uncommitted transcript */
+  --cloud:#F4F4F4;      /* fills */
+  --cloud2:#EDEDED;
+  --hair:#E5E5E5;
+  --sel:#0A84FF;
+  --stage:#EDEDED;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  margin:0;background:var(--stage);font-family:var(--font);
+  display:flex;flex-direction:column;align-items:center;
+  padding:20px 16px 40px;gap:14px;color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---------- dev bar (outside the phone, not part of the design) ---------- */
+.dev{width:100%;max-width:800px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--slate)}
+.dev .t{font-weight:650;color:#3a3a3a;margin-right:2px}
+.dev button{font:inherit;font-size:11.5px;font-weight:560;color:#3a3a3a;background:#fff;border:1px solid #D8D8D8;border-radius:99px;padding:5px 11px;cursor:pointer}
+.dev button:hover{background:#FAFAFA}
+.dev button[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+.dev .sp{flex:1}
+#status{font-size:11.5px;color:var(--mist)}
+
+/* ---------- phone ---------- */
+.phone{
+  width:393px;height:852px;flex:0 0 auto;position:relative;background:var(--paper);
+  border-radius:52px;box-shadow:0 0 0 11px #1C1C1E,0 0 0 13px #3A3A3C,0 26px 60px rgba(0,0,0,.28);
+  overflow:hidden;display:flex;flex-direction:column;
+}
+.island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:118px;height:33px;background:#000;border-radius:20px;z-index:70;pointer-events:none}
+.sbar{position:absolute;top:0;left:0;right:0;height:56px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 7px;font-size:14.5px;font-weight:640;letter-spacing:-.01em;z-index:65;pointer-events:none}
+.sbar .r{display:flex;align-items:center;gap:5px}
+.home{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:139px;height:5px;background:#0D0D0D;border-radius:99px;opacity:.9;z-index:70;pointer-events:none}
+
+.screen{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--paper)}
+.screen[hidden]{display:none}
+.screen.voice{z-index:30}
+
+/* ---------- nav ---------- */
+.nav{flex:0 0 auto;height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;margin-top:56px}
+.nav .title{font-size:16.5px;font-weight:600;letter-spacing:-.014em}
+.iconbtn{width:38px;height:38px;display:grid;place-items:center;border:0;background:transparent;border-radius:50%;cursor:pointer;color:var(--ink)}
+.iconbtn:active{background:var(--cloud)}
+.iconbtn.ghost{color:#3d3d3d}
+
+/* ---------- thread ---------- */
+.thread{flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain;padding:8px 20px 6px;display:flex;flex-direction:column;gap:22px;scrollbar-width:none}
+.thread::-webkit-scrollbar{display:none}
+.msg{max-width:100%;font-size:16.5px;line-height:1.55;letter-spacing:-.011em}
+.msg.user{align-self:flex-end;max-width:80%;background:var(--cloud);padding:11px 15px;border-radius:20px;white-space:pre-wrap;word-break:break-word}
+.msg.bot{align-self:stretch;color:var(--ink);white-space:pre-wrap}
+.msg.bot .cursor{display:inline-block;width:9px;height:16px;background:var(--ink);vertical-align:-2px;margin-left:2px;border-radius:1px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+
+.empty[hidden]{display:none}
+.empty{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding-bottom:70px}
+.empty .mark{width:44px;height:44px;border-radius:50%;border:1.8px solid var(--ink);display:grid;place-items:center}
+.empty p{margin:0;font-size:21px;font-weight:520;letter-spacing:-.02em}
+
+/* ---------- composer, resting (two-row, as the app has it) ---------- */
+.composer{flex:0 0 auto;padding:6px 12px 32px;background:var(--paper)}
+
+.bar[hidden]{display:none}
+.bar{background:var(--cloud);border-radius:25px;padding:12px 10px 9px 16px;display:flex;flex-direction:column;gap:5px}
+.field{
+  min-height:24px;max-height:118px;overflow-y:auto;padding:1px 4px 1px 0;
+  font-size:16.5px;line-height:1.34;letter-spacing:-.011em;color:var(--ink);
+  outline:none;white-space:pre-wrap;word-break:break-word;scrollbar-width:none;
+}
+.field::-webkit-scrollbar{display:none}
+.field:empty::before{content:attr(data-ph);color:#8E8E8E;pointer-events:none}
+.row{display:flex;align-items:center;justify-content:space-between}
+.row .rt{display:flex;align-items:center;gap:2px}
+.round{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;border:0;background:transparent;cursor:pointer;color:var(--ink)}
+.round:active{background:rgba(0,0,0,.055)}
+.round[hidden]{display:none}
+.round.solid{background:var(--ink);color:#fff}
+.round.solid:active{background:#2b2b2b}
+.round.solid:disabled{opacity:.3}
+
+/* ---------- dictation: the composer is REPLACED ---------- */
+.dicwrap[hidden]{display:none}
+.dicwrap{display:flex;flex-direction:column}
+
+/* the added element — live transcript sits above the dictation bar */
+.dictxt[hidden]{display:none}
+.dictxt{
+  padding:2px 8px 16px;max-height:190px;overflow-y:auto;scrollbar-width:none;
+  font-size:19px;line-height:1.42;letter-spacing:-.014em;
+}
+.dictxt::-webkit-scrollbar{display:none}
+.dictxt .fin{color:var(--ink)}      /* committed */
+.dictxt .int{color:var(--mist)}     /* still being heard */
+.dictxt .ph{color:var(--mist);font-size:16.5px;letter-spacing:-.01em}
+
+.dicbar{display:flex;align-items:center;gap:12px;background:var(--cloud);border-radius:31px;padding:8px 8px}
+.circ{flex:0 0 auto;width:46px;height:46px;border-radius:50%;display:grid;place-items:center;border:0;cursor:pointer;background:#E2E2E2;color:var(--ink)}
+.circ.dark{background:var(--ink);color:#fff}
+.circ:active{filter:brightness(.94)}
+
+.wave{flex:1 1 auto;height:46px;display:flex;align-items:center;justify-content:center;gap:3px;overflow:hidden}
+.wave i{
+  display:block;width:3px;min-height:3px;height:3px;border-radius:99px;background:#8A8A8A;
+  transition:height .07s linear;
+}
+
+/* ---------- voice mode ---------- */
+.voice{background:var(--paper)}
+.vtop{flex:0 0 auto;height:48px;margin-top:56px;display:flex;align-items:center;justify-content:space-between;padding:0 14px}
+.vtop .link{border:0;background:transparent;font:inherit;font-size:16.5px;font-weight:560;letter-spacing:-.011em;color:var(--ink);cursor:pointer;padding:6px 6px}
+.vtop .link.ghost{color:var(--slate);font-weight:440}
+
+.vbody[hidden]{display:none}
+.vbody{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:0 28px}
+.blobwrap{flex:0 0 auto;height:266px;display:grid;place-items:center}
+.blob{
+  width:184px;height:184px;border-radius:50%;
+  background:radial-gradient(circle at 34% 28%,#FFFFFF 0%,#E4F0FF 26%,#B6D4FF 54%,#7FB0F5 78%,#5B93E8 100%);
+  box-shadow:0 16px 50px rgba(91,147,232,.30);
+  animation:morph 7s ease-in-out infinite, float 3.4s ease-in-out infinite;
+  transition:width .45s cubic-bezier(.34,1.28,.5,1),height .45s cubic-bezier(.34,1.28,.5,1),opacity .3s ease,filter .3s ease;
+}
+@keyframes morph{
+  0%,100%{border-radius:50% 50% 50% 50%}
+  33%{border-radius:56% 44% 47% 53%}
+  66%{border-radius:44% 56% 54% 46%}
+}
+@keyframes float{0%,100%{transform:scale(1)}50%{transform:scale(1.035)}}
+.blob.responding{width:232px;height:232px;animation-duration:5s,2.1s}
+.blob.muted{filter:saturate(.12);opacity:.5}
+.blob.paused{width:132px;height:132px;animation:none;opacity:.38;box-shadow:none;filter:saturate(.15)}
+
+/* transcript: the only text in this region. no state labels, ever. */
+.tr{flex:0 0 auto;width:100%;min-height:120px;text-align:center;font-size:24px;line-height:1.34;letter-spacing:-.02em;font-weight:480}
+.tr .fin{color:var(--ink)}
+.tr .int{color:var(--mist)}
+.tr .ph{color:var(--mist);font-size:17px;letter-spacing:-.012em;font-weight:400}
+.cap[hidden]{display:none}
+.cap{width:100%;text-align:center;margin-top:18px;font-size:15px;line-height:1.5;letter-spacing:-.009em;color:var(--slate)}
+
+/* Edit — replaces any mistranscription alert */
+.editrow[hidden]{display:none}
+.editrow{flex:0 0 auto;width:100%;display:flex;justify-content:center;padding:14px 0 4px;min-height:56px}
+.editbtn{display:inline-flex;align-items:center;gap:7px;height:40px;padding:0 18px;border-radius:99px;border:1px solid var(--hair);background:#fff;cursor:pointer;font:inherit;font-size:14.5px;font-weight:560;letter-spacing:-.008em;color:var(--ink)}
+.editbtn:active{background:var(--cloud)}
+.editbtn[hidden]{display:none}
+
+/* real control row */
+.vctl[hidden]{display:none}
+.vctl{flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:34px;padding:0 24px 44px}
+.vbtn{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;border:0;background:var(--cloud);color:var(--ink);cursor:pointer;position:relative}
+.vbtn:active{background:var(--cloud2)}
+.vbtn.on{background:var(--ink);color:#fff}
+.vbtn.end{background:var(--ink);color:#fff}
+
+/* voice edit mode — the blob stays visible and dimmed, so the paused mic reads */
+.voice.editing .vbody{flex:0 0 auto}
+.voice.editing .blobwrap{height:196px}
+.voice.editing .tr,.voice.editing .cap{display:none}
+
+/* voice edit mode */
+.veditor[hidden]{display:none}
+.veditor{flex:1 1 auto;display:flex;flex-direction:column;padding:6px 26px 20px}
+.veditor textarea{width:100%;flex:1 1 auto;border:0;outline:none;resize:none;background:transparent;font:inherit;font-size:23px;line-height:1.38;letter-spacing:-.018em;color:var(--ink);padding:4px 0;caret-color:var(--sel)}
+.veditor textarea::selection{background:rgba(10,132,255,.26)}
+.hint{font-size:13px;color:var(--mist);letter-spacing:-.004em;padding-top:10px}
+
+/* ---------- coach mark ---------- */
+.coach[hidden]{display:none}
+.coach{position:absolute;inset:0;z-index:80;display:flex;align-items:flex-end;justify-content:center}
+.coach .scrim{position:absolute;inset:0;background:rgba(13,13,13,.42)}
+.coach .card{position:relative;margin-bottom:126px;width:300px;background:#fff;border-radius:20px;padding:20px 20px 16px;box-shadow:0 18px 46px rgba(0,0,0,.2);text-align:center}
+.coach .card h4{margin:0 0 7px;font-size:17px;font-weight:620;letter-spacing:-.016em}
+.coach .card p{margin:0 0 15px;font-size:14.5px;line-height:1.48;color:var(--slate);letter-spacing:-.006em}
+.coach .card button{width:100%;height:42px;border-radius:99px;border:0;background:var(--ink);color:#fff;font:inherit;font-size:15px;font-weight:580;letter-spacing:-.009em;cursor:pointer}
+.coach .card .beak{position:absolute;bottom:-8px;width:16px;height:16px;background:#fff;transform:rotate(45deg)}
+.coach.at-mic .beak{right:64px}
+.coach.at-center .beak{left:50%;margin-left:-8px}
+.coach.at-center .card{margin-bottom:150px}
+
+.toast{position:absolute;left:50%;bottom:126px;transform:translateX(-50%) translateY(8px);background:rgba(13,13,13,.9);color:#fff;font-size:13px;padding:9px 15px;border-radius:99px;z-index:90;opacity:0;pointer-events:none;transition:opacity .22s ease,transform .22s ease;max-width:300px;text-align:center}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.legend{width:100%;max-width:800px;font-size:12.5px;line-height:1.7;color:var(--slate)}
+.legend b{color:#2b2b2b;font-weight:620}
+.legend .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px}
+
+@media (max-width:460px){
+  body{padding:10px 6px 24px}
+  .phone{width:100%;max-width:393px;height:min(852px,88vh);border-radius:40px;box-shadow:0 0 0 6px #1C1C1E}
+}
+</style>
+</head>
+<body>
+
+<div class="dev">
+  <span class="t">Prototype controls</span>
+  <button id="btnDemo" aria-pressed="false" title="Scripted playback — no microphone needed">Demo mode</button>
+  <button id="btnBaseline" aria-pressed="false" title="Hide the transcript to show today's ChatGPT behaviour">Baseline (no transcript)</button>
+  <button id="btnCap" aria-pressed="true" title="Show ChatGPT's reply as text under the blob">Reply captions</button>
+  <button id="btnReset" title="Show the first-run coach marks again">Reset first-run</button>
+  <button id="btnClear">Clear chat</button>
+  <span class="sp"></span>
+  <span id="status">checking speech support…</span>
+</div>
+
+<div class="phone">
+  <div class="island"></div>
+  <div class="sbar">
+    <span id="clock">9:41</span>
+    <span class="r">
+      <svg width="18" height="12" viewBox="0 0 18 12" fill="none"><rect y="7" width="3" height="5" rx="1" fill="#0D0D0D"/><rect x="5" y="5" width="3" height="7" rx="1" fill="#0D0D0D"/><rect x="10" y="2.5" width="3" height="9.5" rx="1" fill="#0D0D0D"/><rect x="15" width="3" height="12" rx="1" fill="#0D0D0D"/></svg>
+      <svg width="17" height="12" viewBox="0 0 17 12" fill="none"><path d="M8.5 10.6 1 4.2A11.4 11.4 0 0 1 16 4.2L8.5 10.6Z" stroke="#0D0D0D" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      <svg width="26" height="13" viewBox="0 0 26 13" fill="none"><rect x=".8" y=".8" width="21" height="11.4" rx="3.4" stroke="#0D0D0D" stroke-width="1.1" opacity=".4"/><rect x="2.4" y="2.4" width="15" height="8.2" rx="2.2" fill="#0D0D0D"/><path d="M23.6 4.4v4.2a2.4 2.4 0 0 0 0-4.2Z" fill="#0D0D0D" opacity=".4"/></svg>
+    </span>
+  </div>
+
+  <!-- ================= FLOW A — chat + dictation ================= -->
+  <section class="screen chat" id="scChat">
+    <div class="nav">
+      <button class="iconbtn ghost" aria-label="Menu">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <span class="title">ChatGPT</span>
+      <button class="iconbtn ghost" aria-label="New chat">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+
+    <div class="thread" id="thread">
+      <div class="empty" id="empty">
+        <div class="mark">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0D0D0D" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.6 20 8v8l-8 4.4L4 16V8l8-4.4Z"/><path d="M12 12v8.4M12 12 4 8M12 12l8-4"/></svg>
+        </div>
+        <p>What can I help with?</p>
+      </div>
+    </div>
+
+    <div class="composer">
+      <!-- resting composer -->
+      <div class="bar" id="bar">
+        <div class="field" id="field" contenteditable="true" role="textbox" aria-label="Message" data-ph="Ask anything"></div>
+        <div class="row">
+          <button class="round" aria-label="Attach">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <div class="rt">
+            <button class="round" id="btnMic" aria-label="Dictate">
+              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.2" rx="3"/><path d="M5.5 11.4a6.5 6.5 0 0 0 13 0M12 17.9V21.4"/></svg>
+            </button>
+            <button class="round solid" id="btnVoice" aria-label="Voice mode">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 10v4M8.5 6.4v11.2M13 3.4v17.2M17.5 8v8M22 10.6v2.8"/></svg>
+            </button>
+            <button class="round solid" id="btnSend" aria-label="Send" hidden disabled>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19.5V5M5.5 11.5 12 5l6.5 6.5"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- dictation replaces it entirely -->
+      <div class="dicwrap" id="dicwrap" hidden>
+        <div class="dictxt" id="dictxt"></div>
+        <div class="dicbar">
+          <button class="circ" id="btnCancel" aria-label="Cancel dictation">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </button>
+          <div class="wave" id="wave"></div>
+          <button class="circ dark" id="btnConfirm" aria-label="Use this text">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.8 9.6 17.4 19 8"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="coach at-mic" id="coachMic" hidden>
+      <div class="scrim"></div>
+      <div class="card">
+        <h4>See your words as you speak</h4>
+        <p>Dictation now shows the transcript live. Grey text is still being heard — black is locked in.</p>
+        <button data-dismiss="mic">Got it</button>
+        <span class="beak"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= FLOW B — voice mode ================= -->
+  <section class="screen voice" id="scVoice" hidden>
+    <div class="vtop" id="vnav">
+      <button class="iconbtn ghost" id="btnMin" aria-label="Minimise">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9.5 12 15.5 18 9.5"/></svg>
+      </button>
+      <span style="width:38px"></span>
+    </div>
+
+    <div class="vbody" id="vbody">
+      <div class="blobwrap"><div class="blob" id="blob"></div></div>
+      <div class="tr" id="vtr"><span class="ph">Start speaking</span></div>
+      <div class="cap" id="vcap" hidden></div>
+    </div>
+
+    <div class="veditor" id="veditor" hidden>
+      <textarea id="vta" spellcheck="false"></textarea>
+      <div class="hint">Fix only what's wrong — the rest of your sentence is kept.</div>
+    </div>
+
+    <div class="editrow" id="editrow">
+      <button class="editbtn" id="btnEdit" hidden>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="M14.5 6.5 17.5 9.5"/></svg>
+        Edit
+      </button>
+    </div>
+
+    <div class="vctl" id="vctl">
+      <button class="vbtn" id="btnMute" aria-label="Mute">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.2" rx="3"/><path d="M5.5 11.4a6.5 6.5 0 0 0 13 0M12 17.9V21.4"/></svg>
+      </button>
+      <button class="vbtn end" id="btnEnd" aria-label="End voice conversation">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="coach at-center" id="coachVoice" hidden>
+      <div class="scrim"></div>
+      <div class="card">
+        <h4>Everything you say, on screen</h4>
+        <p>Your words appear as you speak them. If something comes out wrong, tap Edit and fix just that part — no need to start over.</p>
+        <button data-dismiss="voice">Start talking</button>
+        <span class="beak"></span>
+      </div>
+    </div>
+  </section>
+
+  <div class="toast" id="toast"></div>
+  <div class="home"></div>
+</div>
+
+<div class="legend">
+  <b>Chrome is the app's, unchanged.</b> Dictation replaces the composer with ✕ / waveform / ✓ exactly as it does today; voice mode keeps the blob and the mute · camera · captions · end row.
+  The one addition is the transcript — <b><span class="sw" style="background:#9B9B9B"></span>grey</b> while the recogniser may still revise it,
+  <b><span class="sw" style="background:#0D0D0D"></span>black</b> once committed. Hit <b>Baseline</b> above to hide it and see today's behaviour for comparison.
+  Voice mode carries <b>no state labels</b>, and a mistranscription is <b>never flagged</b> — the persistent <b>Edit</b> button is the only affordance.
+</div>
+
+<script>
+"use strict";
+
+const $ = id => document.getElementById(id);
+const el = {
+  chat:$('scChat'), voice:$('scVoice'), thread:$('thread'), empty:$('empty'),
+  bar:$('bar'), field:$('field'), btnMic:$('btnMic'), btnVoice:$('btnVoice'), btnSend:$('btnSend'),
+  dicwrap:$('dicwrap'), dictxt:$('dictxt'), wave:$('wave'), btnCancel:$('btnCancel'), btnConfirm:$('btnConfirm'),
+  blob:$('blob'), vtr:$('vtr'), vcap:$('vcap'), vbody:$('vbody'), veditor:$('veditor'), vta:$('vta'),
+  editrow:$('editrow'), btnEdit:$('btnEdit'), vctl:$('vctl'), vnav:$('vnav'),
+  btnMute:$('btnMute'), btnEnd:$('btnEnd'), btnMin:$('btnMin'),
+  coachMic:$('coachMic'), coachVoice:$('coachVoice'), toast:$('toast'), status:$('status'), clock:$('clock'),
+  btnDemo:$('btnDemo'), btnBaseline:$('btnBaseline'), btnCap:$('btnCap'), btnReset:$('btnReset'), btnClear:$('btnClear')
+};
+
+const S = {
+  screen:'chat', target:null,           // 'dictation' | 'voice'
+  vstate:'idle',                        // listening | responding | editing | muted
+  fin:'', int:'',
+  demo:false, baseline:false, captions:true, muted:false, busy:false,
+  turnTimer:null, holdTimer:null
+};
+
+const LS = {
+  get micSeen(){ try{return localStorage.getItem('lt.mic')==='1'}catch(e){return false} },
+  get voiceSeen(){ try{return localStorage.getItem('lt.voice')==='1'}catch(e){return false} },
+  see(k){ try{localStorage.setItem('lt.'+k,'1')}catch(e){} },
+  reset(){ try{localStorage.removeItem('lt.mic');localStorage.removeItem('lt.voice')}catch(e){} }
+};
+
+function toast(m,ms=2600){ el.toast.textContent=m; el.toast.classList.add('on');
+  clearTimeout(toast._t); toast._t=setTimeout(()=>el.toast.classList.remove('on'),ms); }
+function tick(){ const d=new Date();
+  el.clock.textContent=(d.getHours()%12===0?12:d.getHours()%12)+':'+String(d.getMinutes()).padStart(2,'0'); }
+tick(); setInterval(tick,10000);
+
+/* ============================================================
+   waveform — real amplitude when a mic is available
+   ============================================================ */
+const BARS = 34;
+for(let i=0;i<BARS;i++) el.wave.appendChild(document.createElement('i'));
+const bars = [...el.wave.children];
+
+const Level = {
+  ctx:null, an:null, stream:null, raf:null, t:0, live:false,
+  async start(){
+    this.t = 0;
+    if(!S.demo && navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+      try{
+        this.stream = await navigator.mediaDevices.getUserMedia({audio:true});
+        this.ctx = new (window.AudioContext||window.webkitAudioContext)();
+        const src = this.ctx.createMediaStreamSource(this.stream);
+        this.an = this.ctx.createAnalyser(); this.an.fftSize = 128; this.an.smoothingTimeConstant = .74;
+        src.connect(this.an); this.live = true;
+      }catch(e){ this.live = false; }
+    }
+    const buf = this.an ? new Uint8Array(this.an.frequencyBinCount) : null;
+    const loop = () => {
+      this.t += 1;
+      if(this.live && this.an){
+        this.an.getByteFrequencyData(buf);
+        for(let i=0;i<BARS;i++){
+          // mirror the spectrum outward from the centre
+          const d = Math.abs(i - (BARS-1)/2) / ((BARS-1)/2);
+          const bin = Math.floor(d * (buf.length * .55)) + 1;
+          const v = buf[bin] / 255;
+          bars[i].style.height = Math.max(3, Math.round(3 + v * 30 * (1 - d*.45))) + 'px';
+        }
+      }else{
+        // synthetic: a travelling swell so demo mode still reads as "hearing you"
+        for(let i=0;i<BARS;i++){
+          const d = Math.abs(i - (BARS-1)/2) / ((BARS-1)/2);
+          const s = Math.sin(this.t*.09 + i*.42) * Math.sin(this.t*.031 + i*.13);
+          const v = Math.abs(s) * (1 - d*.55);
+          bars[i].style.height = Math.max(3, Math.round(3 + v * 26)) + 'px';
+        }
+      }
+      this.raf = requestAnimationFrame(loop);
+    };
+    loop();
+  },
+  stop(){
+    cancelAnimationFrame(this.raf); this.raf = null; this.live = false;
+    bars.forEach(b => b.style.height = '3px');
+    if(this.stream){ this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
+    if(this.ctx){ try{ this.ctx.close(); }catch(e){} this.ctx = null; this.an = null; }
+  }
+};
+
+/* ============================================================
+   speech engines — real and scripted share one interface
+   ============================================================ */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+const RealEngine = {
+  ok:!!SR, rec:null, want:false, cb:null,
+  start(cb){
+    this.cb = cb; this.want = true;
+    const r = new SR();
+    r.continuous = true; r.interimResults = true; r.lang = 'en-US'; r.maxAlternatives = 1;
+    r.onresult = e => {
+      let fin='', int='';
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        const res = e.results[i];
+        if(res.isFinal) fin += res[0].transcript; else int += res[0].transcript;
+      }
+      if(fin) cb.final(fin);
+      cb.interim(int);
+    };
+    r.onerror = e => {
+      if(e.error==='not-allowed' || e.error==='service-not-allowed'){
+        this.want=false; toast('Microphone blocked — switching to demo mode'); setDemo(true); cb.fail();
+      }else if(e.error==='network'){
+        this.want=false; toast('Speech service unreachable — demo mode'); setDemo(true); cb.fail();
+      }
+    };
+    r.onend = () => { if(this.want){ try{ r.start(); }catch(err){} } else { cb.end(); } };
+    this.rec = r;
+    try{ r.start(); }catch(err){}
+  },
+  stop(){ this.want=false; if(this.rec){ try{this.rec.stop()}catch(e){} } },
+  pause(){ this.want=false; if(this.rec){ try{this.rec.abort()}catch(e){} } },
+  resume(){ if(this.rec){ this.want=true; try{this.rec.start()}catch(e){} } }
+};
+
+/* Scripted playback. Emits the same interim→final promotion the real API does,
+   so every downstream path is identical. Used with no mic, no permission,
+   or when a run has to be deterministic in front of an audience. */
+const DemoEngine = {
+  ok:true, timer:null, cb:null, script:null, i:0, buf:'', n:0,
+  scripts:{
+    dictation:[
+      "can you explain the difference between correlation and causation",
+      "give me five interview questions for a product manager role",
+      "summarise photosynthesis in two lines for my exam tomorrow"
+    ],
+    voice:[
+      "I'm making a study plan for my finals and I want to know the coast of tutoring",
+      "explain the bystander effect with a real example I can use in class",
+      "what should I revise first if I only have two days left"
+    ]
+  },
+  start(cb, kind){
+    const arr = this.scripts[kind] || this.scripts.dictation;
+    this.script = arr[this.n++ % arr.length].split(' ');
+    this.cb = cb; this.i = 0; this.buf = '';
+    const step = () => {
+      if(this.i >= this.script.length){ this.timer = null; return; }
+      this.buf += (this.buf ? ' ' : '') + this.script[this.i++];
+      cb.interim(this.buf);
+      if(this.i % 4 === 0 || this.i === this.script.length){   // promote in chunks, like a recogniser
+        cb.final(this.buf + ' '); this.buf = ''; cb.interim('');
+      }
+      this.timer = setTimeout(step, 150 + Math.random()*190);
+    };
+    this.timer = setTimeout(step, 460);
+  },
+  stop(){ clearTimeout(this.timer); this.timer=null; if(this.cb) this.cb.end(); },
+  pause(){ clearTimeout(this.timer); this.timer=null; },
+  resume(){}
+};
+
+function engine(){ return S.demo ? DemoEngine : RealEngine; }
+function setDemo(on){
+  S.demo = on;
+  el.btnDemo.setAttribute('aria-pressed', String(on));
+  el.status.textContent = on ? 'demo mode — scripted playback, no mic'
+    : (RealEngine.ok ? 'live mic — Web Speech API ready' : 'no Web Speech API in this browser');
+}
+
+/* ============================================================
+   transcript rendering — the two-tone core
+   ============================================================ */
+function esc(s){ return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function twoTone(f,i){
+  return (f ? '<span class="fin">'+esc(f)+'</span>' : '') + (i ? '<span class="int">'+esc(i)+'</span>' : '');
+}
+
+function paintDictation(){
+  if(S.baseline){ el.dictxt.hidden = true; return; }   // today's app: no text at all
+  el.dictxt.hidden = false;
+  const f = S.fin, i = S.int;
+  el.dictxt.innerHTML = (!f && !i) ? '<span class="ph">Listening…</span>' : twoTone(f, i && (f?' ':'')+i);
+  el.dictxt.scrollTop = el.dictxt.scrollHeight;
+}
+function paintVoice(){
+  if(S.baseline){ el.vtr.innerHTML=''; return; }
+  const f = S.fin, i = S.int;
+  el.vtr.innerHTML = (!f && !i) ? '<span class="ph">Start speaking</span>' : twoTone(f, i && (f?' ':'')+i);
+}
+function paint(){ S.target === 'voice' ? paintVoice() : paintDictation(); }
+
+function resumeFromReview(){
+  clearTimeout(S.holdTimer);
+  S.vstate = 'listening';
+  el.btnEdit.hidden = true;
+}
+
+const cb = {
+  final(t){ S.fin = (S.fin + ' ' + t).replace(/\s+/g,' ').trim(); S.int=''; paint();
+            if(S.target === 'voice'){ if(S.vstate === 'review') resumeFromReview(); armTurnEnd(); } },
+  interim(t){ S.int = t; paint();
+            if(S.target === 'voice' && t){ if(S.vstate === 'review') resumeFromReview(); armTurnEnd(); } },
+  end(){},
+  fail(){ if(S.target==='dictation'){ setTimeout(()=>{ engine().start(cb,'dictation'); }, 250); }
+          else if(S.target==='voice'){ setTimeout(startVoiceListening, 250); } }
+};
+
+/* ============================================================
+   FLOW A — dictation replaces the composer
+   ============================================================ */
+function typedText(){ return el.field.innerText.replace(/ /g,' ').trim(); }
+function syncSend(){
+  const has = typedText().length > 0;
+  el.btnSend.hidden = !has; el.btnSend.disabled = !has;
+  el.btnVoice.hidden = has;
+  el.btnMic.hidden = has;
+}
+
+function openDictation(){
+  if(S.busy) return;
+  S.target = 'dictation'; S.fin = ''; S.int = '';
+  el.bar.hidden = true; el.dicwrap.hidden = false;
+  paintDictation();
+  Level.start();
+  engine().start(cb, 'dictation');
+}
+function closeDictation(keep){
+  engine().stop(); Level.stop();
+  clearTimeout(S.turnTimer);
+  // anything still grey commits the moment recording ends
+  const text = (S.fin + ' ' + S.int).replace(/\s+/g,' ').trim();
+  S.target = null; S.fin=''; S.int='';
+  el.dicwrap.hidden = true; el.bar.hidden = false;
+  el.dictxt.innerHTML = '';
+  if(keep && text){
+    // lands in the real composer, so it is editable with the ordinary keyboard
+    const prev = typedText();
+    el.field.textContent = (prev ? prev + ' ' : '') + text;
+    placeCaretEnd(el.field);
+  }
+  syncSend();
+}
+function placeCaretEnd(node){
+  const r = document.createRange(), s = window.getSelection();
+  r.selectNodeContents(node); r.collapse(false); s.removeAllRanges(); s.addRange(r);
+}
+
+el.btnMic.addEventListener('click', () => {
+  if(!LS.micSeen){ el.coachMic.hidden = false; return; }
+  openDictation();
+});
+el.btnCancel.addEventListener('click', () => closeDictation(false));
+el.btnConfirm.addEventListener('click', () => closeDictation(true));
+
+el.field.addEventListener('input', syncSend);
+el.field.addEventListener('keydown', e => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
+el.btnSend.addEventListener('click', send);
+
+function send(){
+  const text = typedText();
+  if(!text || S.busy) return;
+  el.field.textContent = ''; syncSend();
+  addMsg('user', text);
+  respondInChat(text);
+}
+function addMsg(who, text){
+  el.empty.hidden = true;
+  const d = document.createElement('div');
+  d.className = 'msg ' + who; d.textContent = text;
+  el.thread.appendChild(d); el.thread.scrollTop = el.thread.scrollHeight;
+  return d;
+}
+function respondInChat(prompt){
+  S.busy = true;
+  const node = addMsg('bot','');
+  const words = reply(prompt).split(' ');
+  const cur = document.createElement('span'); cur.className = 'cursor'; node.appendChild(cur);
+  let i = 0;
+  const t = setInterval(() => {
+    if(i >= words.length){ clearInterval(t); cur.remove(); S.busy=false; syncSend(); return; }
+    cur.insertAdjacentText('beforebegin', (i?' ':'') + words[i++]);
+    el.thread.scrollTop = el.thread.scrollHeight;
+  }, 42);
+}
+
+/* ============================================================
+   FLOW B — voice mode
+   ============================================================ */
+function openVoice(){
+  if(S.target === 'dictation') closeDictation(false);
+  S.screen = 'voice';
+  el.chat.hidden = true; el.voice.hidden = false;
+  S.fin=''; S.int=''; S.muted=false;
+  el.btnMute.classList.remove('on');
+  el.vcap.hidden = true; el.vcap.textContent='';
+  el.btnEdit.hidden = true;
+  paintVoice();
+  if(!LS.voiceSeen){ el.coachVoice.hidden = false; return; }
+  startVoiceListening();
+}
+function closeVoice(){
+  clearTimeout(S.turnTimer); clearTimeout(S.holdTimer);
+  engine().stop();
+  try{ speechSynthesis.cancel(); }catch(e){}
+  clearInterval(typeCaption._t);
+  S.target=null; S.vstate='idle';
+  el.blob.className = 'blob';
+  el.voice.classList.remove('editing');
+  el.veditor.hidden = true; el.editrow.hidden = false; el.vctl.hidden = false;
+  el.voice.hidden = true; el.chat.hidden = false; S.screen='chat';
+  S.fin=''; S.int='';
+  el.thread.scrollTop = el.thread.scrollHeight;
+  syncSend();
+}
+function startVoiceListening(){
+  clearTimeout(S.holdTimer);
+  S.target='voice'; S.vstate='listening'; S.fin=''; S.int='';
+  el.blob.className = 'blob';
+  el.vcap.hidden = true; el.btnEdit.hidden = true;
+  paintVoice();
+  if(!S.muted) engine().start(cb, 'voice');
+}
+
+/* end of turn by silence — a conversation, not a send button */
+function armTurnEnd(){
+  clearTimeout(S.turnTimer);
+  S.turnTimer = setTimeout(() => {
+    if(S.vstate === 'listening' && (S.fin + S.int).trim().length > 2) endTurn();
+  }, S.demo ? 1200 : 1900);
+}
+/* The sentence is finished. Hold it on screen, fully committed, with Edit offered —
+   then answer. Edit stays available through the reply, so a late catch still works. */
+const HOLD_MS = 3200;
+
+function endTurn(){
+  clearTimeout(S.turnTimer);
+  S.fin = (S.fin + ' ' + S.int).replace(/\s+/g,' ').trim(); S.int='';
+  paintVoice();
+  enterReview();       // mic stays open — carry on talking and the hold is cancelled
+}
+
+function enterReview(){
+  S.vstate = 'review';
+  el.blob.className = 'blob';
+  el.btnEdit.hidden = S.baseline || !S.fin.trim();
+  clearTimeout(S.holdTimer);
+  S.holdTimer = setTimeout(respondTurn, HOLD_MS);
+}
+
+function respondTurn(){
+  clearTimeout(S.holdTimer);
+  if(!S.fin.trim()){ startVoiceListening(); return; }
+  engine().pause();                       // now stop the mic, so TTS is not fed back in
+  S.vstate = 'responding';
+  el.blob.className = 'blob responding';
+  el.btnEdit.hidden = S.baseline;         // still catchable while it answers
+  const text = reply(S.fin);
+  if(S.captions && !S.baseline){ el.vcap.hidden=false; el.vcap.textContent=''; typeCaption(text); }
+  speak(text, () => {
+    if(S.screen!=='voice' || S.vstate!=='responding') return;
+    S.fin=''; S.int=''; el.vcap.hidden=true;
+    startVoiceListening();
+  });
+}
+function typeCaption(text){
+  const w = text.split(' '); let i=0;
+  clearInterval(typeCaption._t);
+  typeCaption._t = setInterval(()=>{
+    if(i>=w.length || S.vstate!=='responding'){ clearInterval(typeCaption._t); return; }
+    el.vcap.textContent += (i?' ':'') + w[i++];
+  }, 68);
+}
+function speak(text, done){
+  if(!('speechSynthesis' in window)){ setTimeout(done, Math.min(8000, text.length*48)); return; }
+  try{ speechSynthesis.cancel(); }catch(e){}
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate=1.03; u.pitch=1; u.lang='en-US';
+  const vs = speechSynthesis.getVoices();
+  const v = vs.find(x=>/en-US/i.test(x.lang) && /natural|google|samantha|aria/i.test(x.name)) || vs.find(x=>/^en/i.test(x.lang));
+  if(v) u.voice = v;
+  let fired=false; const fin=()=>{ if(!fired){ fired=true; done(); } };
+  u.onend=fin; u.onerror=fin;
+  setTimeout(fin, Math.min(26000, 1400 + text.length*62));   // some Chrome builds never fire onend
+  speechSynthesis.speak(u);
+}
+
+/* ---- edit mode: replaces any mistranscription alert ---- */
+function openEdit(){
+  clearTimeout(S.turnTimer); clearTimeout(S.holdTimer);
+  clearInterval(typeCaption._t);
+  try{ speechSynthesis.cancel(); }catch(e){}   // barging in on the reply is allowed
+  el.vcap.hidden = true;
+  engine().pause();
+  S.vstate='editing';
+  el.blob.className='blob paused';
+  el.voice.classList.add('editing');
+  el.editrow.hidden=true; el.vctl.hidden=true;
+  el.veditor.hidden=false;
+  el.vta.value = (S.fin + ' ' + S.int).replace(/\s+/g,' ').trim();
+  el.vnav.innerHTML =
+    '<button class="link ghost" id="edCancel">Cancel</button><button class="link" id="edDone">Done</button>';
+  $('edCancel').onclick = () => closeEdit(false);
+  $('edDone').onclick   = () => closeEdit(true);
+  el.vta.focus();
+  const t = el.vta.value, m = t.match(/[\w']+\s*$/);
+  if(m) el.vta.setSelectionRange(t.length - m[0].length, t.length);   // preselect the likeliest error
+}
+function closeEdit(keep){
+  if(keep) S.fin = el.vta.value.trim();
+  S.int='';
+  el.vnav.innerHTML =
+    '<button class="iconbtn ghost" id="btnMin" aria-label="Minimise">'+
+    '<svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9.5 12 15.5 18 9.5"/></svg>'+
+    '</button><span style="width:38px"></span>';
+  $('btnMin').onclick = closeVoice;
+  el.voice.classList.remove('editing');
+  el.veditor.hidden=true; el.editrow.hidden=false; el.vctl.hidden=false;
+  el.blob.className='blob';
+  paintVoice();
+  if(keep) respondTurn();     // corrected prompt goes straight to the answer
+  else enterReview();         // cancelled — sentence stands, hold restarts
+}
+
+el.btnVoice.addEventListener('click', openVoice);
+el.btnEnd.addEventListener('click', closeVoice);
+el.btnMin.addEventListener('click', closeVoice);
+el.btnEdit.addEventListener('click', openEdit);
+
+el.btnMute.addEventListener('click', () => {
+  S.muted = !S.muted;
+  el.btnMute.classList.toggle('on', S.muted);
+  el.blob.classList.toggle('muted', S.muted);
+  if(S.muted){ clearTimeout(S.turnTimer); engine().pause(); }
+  else if(S.vstate === 'listening'){ engine().resume(); }
+});
+
+document.querySelectorAll('[data-dismiss]').forEach(b => {
+  b.addEventListener('click', () => {
+    const k = b.dataset.dismiss; LS.see(k);
+    (k==='mic' ? el.coachMic : el.coachVoice).hidden = true;
+    if(k==='mic') openDictation(); else startVoiceListening();
+  });
+});
+
+/* ============================================================
+   canned replies — no network, no key, deterministic
+   ============================================================ */
+const REPLIES = [
+  [/correlat|causat/i, "Correlation means two things move together. Causation means one actually makes the other happen. Ice cream sales and drowning both rise in summer, but neither causes the other — heat drives both. To claim causation you need a controlled comparison, not just a matching pattern."],
+  [/interview question|pm role|product manager/i, "Here are five. Tell me about a product you improved and how you measured it. How would you choose between two features with equal reach? Walk me through a metric that dropped and what you checked first. How do you say no to a senior stakeholder? What would you build for a user who has stopped opening the app?"],
+  [/photosynthesis/i, "Plants take in carbon dioxide and water, and use sunlight captured by chlorophyll to convert them into glucose. Oxygen is released as a by-product, which is what makes the reaction matter to us."],
+  [/bystander/i, "The bystander effect is when people are less likely to help because others are present — everyone assumes someone else will act. A classroom example: a projector stops working and thirty students sit there, each waiting for another to tell the teacher."],
+  [/cost|coast|tutor|fees|price/i, "Private tutoring usually runs between four hundred and twelve hundred rupees an hour, depending on the subject and the tutor's experience. Group sessions cut that to roughly a third. If your finals are close, targeted doubt-clearing sessions tend to give more return than a full recurring schedule."],
+  [/revise|two days|study plan|finals|exam/i, "Start with the topics that carry the most marks and that you are least sure about — that overlap is where the fastest gains are. Give the first day to those, keep the second for past papers under timed conditions, and leave the last two hours for a quick pass over formulas and definitions."],
+  [/weather/i, "I do not have live weather here, but tell me your city and I can walk you through what to check and how to plan around it."]
+];
+function reply(prompt){
+  for(const [re, ans] of REPLIES) if(re.test(prompt)) return ans;
+  const topic = prompt.replace(/^(can you |could you |please |hey |ok |so )/i,'').replace(/[?.!]+$/,'').trim();
+  return "Good question. Here is the short version of " + (topic.length>70 ? "that" : '"'+topic+'"') +
+    ": split it into the part you already understand and the part that is actually blocking you, then go after the second one first. Tell me which half is fuzzy and I will go deeper on it.";
+}
+
+/* ============================================================
+   dev bar
+   ============================================================ */
+el.btnDemo.addEventListener('click', () => {
+  const wasDic = S.target==='dictation', wasVoice = S.target==='voice';
+  engine().stop(); Level.stop();
+  setDemo(!S.demo);
+  if(wasDic){ engine().start(cb,'dictation'); Level.start(); }
+  if(wasVoice){ startVoiceListening(); }
+});
+el.btnBaseline.addEventListener('click', () => {
+  S.baseline = !S.baseline;
+  el.btnBaseline.setAttribute('aria-pressed', String(S.baseline));
+  if(S.baseline) el.btnEdit.hidden = true;
+  paint();
+  toast(S.baseline ? 'Baseline — transcript hidden, as the app behaves today' : 'Live transcript on');
+});
+el.btnCap.addEventListener('click', () => {
+  S.captions = !S.captions;
+  el.btnCap.setAttribute('aria-pressed', String(S.captions));
+  if(!S.captions) el.vcap.hidden = true;
+});
+el.btnReset.addEventListener('click', () => { LS.reset(); toast('First-run coach marks will show again'); });
+el.btnClear.addEventListener('click', () => {
+  el.thread.querySelectorAll('.msg').forEach(n => n.remove());
+  el.empty.hidden = false;
+});
+
+/* boot */
+setDemo(!RealEngine.ok);
+if(!RealEngine.ok) toast('This browser has no Web Speech API — running in demo mode');
+try{ speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged = () => {}; }catch(e){}
+syncSend();
+</script>
+</body>
+</html>
