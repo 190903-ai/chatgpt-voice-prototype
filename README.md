@@ -1,4 +1,4 @@
-﻿# ChatGPT Voice: Live Transcript Prototype
+# ChatGPT Voice: Live Transcript Prototype
 
 A working prototype from my product case study on increasing voice input in the ChatGPT mobile app. It shows the idea I picked: **show the user's words on screen while they speak**.
 
@@ -12,11 +12,12 @@ Live transcripts while speaking, in both the mic button and Voice mode. I scored
 
 ## What you can try
 Use the buttons at the top of the page.
-- **Demo mode:** plays a sample conversation so you can see the feature without a microphone.
-- **Baseline (no transcript):** how it works today, with no words shown.
-- **Reply captions:** shows live captions with the transcript. Words that may still change are grey, and they turn black once they are final.
-- **Reset first-run** and **Clear chat:** start over.
-- **Live mic:** speak and watch your words appear. This uses the browser's Web Speech API, so use Chrome or Edge and allow the microphone.
+- **Demo mode:** scripted playback, so you can see the feature without a microphone.
+- **Baseline (no transcript):** hides the transcript to show how ChatGPT works today.
+- **Reply captions:** shows ChatGPT's reply as text under the voice blob.
+- **Reset first-run:** shows the first-run tips again.
+- **Clear chat:** starts the conversation over.
+- **Live mic:** speak and watch your words appear. Words that may still change are grey, and they turn black once they are final. This uses the browser's Web Speech API, so use Chrome or Edge and allow the microphone.
 
 ## Run it yourself
 It is one file with no build step and no keys.
@@ -28,5 +29,5 @@ It is one file with no build step and no keys.
 
 ## Notes
 - This is a student case-study prototype. It is not made by or connected to OpenAI. ChatGPT is a trademark of OpenAI.
-- It does not send your voice or text anywhere. It makes no network calls.
+- The page itself makes no network calls and stores nothing. In Chrome and Edge, the browser's own speech recognition may send audio to the browser maker's service. Use Demo mode if you would rather not use the microphone.
 - Success metric I proposed: voice sessions per user.
